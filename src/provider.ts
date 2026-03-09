@@ -16,7 +16,7 @@ export default class DiredProvider implements vscode.TextDocumentContentProvider
     private _onDidChange = new vscode.EventEmitter<vscode.Uri>();
     private _fixed_window: boolean;
     private _show_dot_files: boolean = true;
-    private _buffers: string[]; // This is a temporary buffer. Reused by multiple tabs.
+    private _buffers: string[] = []; // This is a temporary buffer. Reused by multiple tabs.
     private _directoryHistory: string[] = []; // Track directory history for back navigation
     private _wdiredMode: boolean = false; // Track if in wdired edit mode
     private _originalBuffers: string[] = []; // Store original buffer content for revert
@@ -24,7 +24,6 @@ export default class DiredProvider implements vscode.TextDocumentContentProvider
     private _currentDiredFile: string | null = null; // Current dired temp file
     private _diredDocument: vscode.TextDocument | null = null; // Current dired document
     private _documentChangeListener: vscode.Disposable | null = null; // Document change listener
-    private _virtualDocumentContents: Map<string, string> = new Map(); // Store virtual document contents
     private _wdiredTempFile: string | null = null; // Temp file for wdired mode
     private _diredVirtualUri: vscode.Uri | null = null; // Store the virtual URI for returning to dired
 
@@ -38,15 +37,17 @@ export default class DiredProvider implements vscode.TextDocumentContentProvider
             this._documentChangeListener.dispose();
         }
         this.cleanupTempFiles();
-        this._virtualDocumentContents.clear();
     }
 
     get onDidChange() {
         return this._onDidChange.event;
     }
 
-    provideTextDocumentContent(uri: vscode.Uri): string | undefined {
-        return this._virtualDocumentContents.get(uri.toString());
+    provideTextDocumentContent(_uri: vscode.Uri): string {
+        // Always return current buffer content. No map lookup — avoids any
+        // URI key mismatch between how we store keys vs. how VSCode presents
+        // the URI to this method. _buffers is always a string[] (initialized to []).
+        return this._buffers.join('\n');
     }
 
     get dirname() {
@@ -58,13 +59,10 @@ export default class DiredProvider implements vscode.TextDocumentContentProvider
         if (!doc || !this.isDiredDocument(doc)) {
             return undefined;
         }
-        
-        // For virtual documents, extract the path from the URI query
+
+        // For virtual documents, the directory path is stored directly in the URI path.
         if (doc.uri.scheme === DiredProvider.scheme) {
-            const query = doc.uri.query;
-            if (query) {
-                return decodeURIComponent(query);
-            }
+            return doc.uri.path || undefined;
         }
         
         // For other documents, parse from the first line
@@ -135,11 +133,7 @@ export default class DiredProvider implements vscode.TextDocumentContentProvider
             // Recreate buffer content with latest directory state
             await this.createBuffer(currentDir);
 
-            // Update virtual document content
-            const content = this._buffers.join('\n');
-            this._virtualDocumentContents.set(this._diredDocument.uri.toString(), content);
-
-            // Trigger content update
+            // Trigger content update — provideTextDocumentContent reads _buffers directly
             this._onDidChange.fire(this._diredDocument.uri);
 
             vscode.window.showInformationMessage('Directory refreshed');
@@ -568,15 +562,7 @@ export default class DiredProvider implements vscode.TextDocumentContentProvider
             // Create buffer content
             await this.createBuffer(dirPath);
 
-            // Create virtual document URI with directory name as the visible part
-            const dirBasename = path.basename(dirPath) || 'root';
-            const encodedPath = encodeURIComponent(dirPath);
-            // Create a URI that displays nicely in the tab
-            const virtualUri = vscode.Uri.parse(`${DiredProvider.scheme}:${dirBasename}?${encodedPath}`);
-
-            // Store content for the virtual document
-            const content = this._buffers.join('\n');
-            this._virtualDocumentContents.set(virtualUri.toString(), content);
+            const virtualUri = vscode.Uri.from({ scheme: DiredProvider.scheme, path: dirPath });
 
             // Open the virtual document
             const doc = await vscode.workspace.openTextDocument(virtualUri);
@@ -718,10 +704,8 @@ export default class DiredProvider implements vscode.TextDocumentContentProvider
             this._buffers[i] = f.line();
         }
         
-        // Update virtual document content
+        // Trigger content update — provideTextDocumentContent reads _buffers directly
         if (this._diredDocument && this._diredDocument.uri.scheme === DiredProvider.scheme) {
-            const content = this._buffers.join('\n');
-            this._virtualDocumentContents.set(this._diredDocument.uri.toString(), content);
             this._onDidChange.fire(this._diredDocument.uri);
         }
     }

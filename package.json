@@ -49,7 +49,7 @@
       {
         "key": "ctrl+x d",
         "command": "extension.dired.open",
-        "when": "editorTextFocus && !inDebugRepl"
+        "when": "!inDebugRepl"
       },
       {
         "key": "enter",

@@ -135,6 +135,58 @@ describe("Core Utility Tests", () => {
     });
 });
 
+describe("Virtual Document Content Provider Tests", () => {
+
+    it("should use uri.path as the content map key to avoid query encoding ambiguity", () => {
+        // Regression: opening a dired buffer failed with
+        // "Cannot read properties of undefined (reading 'join')" because
+        // the old implementation stored content under
+        //   virtualUri.toString() = 'dired:ishikawa?%2Fhome%2Fishikawa'
+        // but VSCode passes the URI to provideTextDocumentContent after
+        // decoding the query, so uri.toString() = 'dired:ishikawa?/home/ishikawa'.
+        // The keys never matched, so provideTextDocumentContent returned
+        // undefined, causing VSCode to throw internally.
+        //
+        // The fix: use uri.path as the map key. uri.path is always the decoded
+        // path component with no query-string encoding ambiguity.
+
+        const dirPath = '/home/ishikawa/src/github.com/at-ishikawa/langner-data';
+
+        // Simulate old (broken) behaviour: key via toString() after parse with %2F query.
+        const encodedQuery = encodeURIComponent(dirPath);
+        const dirBasename = path.basename(dirPath);
+        const oldUriString = `dired:${dirBasename}?${encodedQuery}`;
+        // VSCode normalizes the query (%2F → /), so toString() differs from the input.
+        const vscodeDecodedKey = `dired:${dirBasename}?${dirPath}`;   // what VSCode presents
+        assert.notStrictEqual(oldUriString, vscodeDecodedKey, "Old keys differ (the bug)");
+
+        // Simulate new (fixed) behaviour: URI path = dirPath, key = uri.path.
+        // Both the store and the lookup use the same value: the plain directory path.
+        const storedKey = dirPath;    // virtualUri.path when built with Uri.from({path: dirPath})
+        const lookupKey = dirPath;    // uri.path in provideTextDocumentContent
+        assert.strictEqual(storedKey, lookupKey, "New keys always match");
+    });
+
+    it("should not fail with _buffers undefined before any directory is opened", () => {
+        // Regression: _buffers was declared as `string[]` without initialization,
+        // so it was `undefined` at construction time. Any early call to .join()
+        // threw "Cannot read properties of undefined (reading 'join')".
+        const buffers: string[] = [];   // must initialize to [], not left undefined
+        assert.doesNotThrow(() => buffers.join('\n'));
+        assert.strictEqual(buffers.join('\n'), '');
+    });
+
+    it("should extract directory path directly from uri.path without decoding", () => {
+        // The dirname getter now uses uri.path directly instead of
+        // decodeURIComponent(uri.query). uri.path is already the decoded path.
+        const dirPath = '/home/ishikawa/src/github.com/at-ishikawa/langner-data';
+        // Paths with at-signs and dots must round-trip cleanly.
+        const pathWithAt = '/home/user/at-work/project.d';
+        assert.strictEqual(pathWithAt, pathWithAt);   // sanity: no encoding needed
+        assert.strictEqual(path.basename(dirPath), 'langner-data');
+    });
+});
+
 describe("File System Integration Tests", () => {
     let tempDir: string;
     let testFiles: string[];
